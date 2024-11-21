@@ -85,6 +85,7 @@ def hsts(domain):
         return False
     
 def tls_versions(domain):
+    # Add SSLv2, SSLv3
     versions_of_tls = ["-tls1_3", "-tls1_2", "-tls1_1", "-tls1"]
     response = []
 

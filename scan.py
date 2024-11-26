@@ -18,6 +18,7 @@ from geopy.geocoders import Nominatim
 def scan_time():
     return time.time()
 
+
 def ipv4_addresses(domain, dns_resolvers):
     all_ip_addresses = []
     for resolver in dns_resolvers:
@@ -27,30 +28,50 @@ def ipv4_addresses(domain, dns_resolvers):
             all_ip_addresses += ip_addresses
         except Exception as e:
             pass
-    return list(set(all_ip_addresses))
+
+    all_ip_addresses = list(set(all_ip_addresses))
+
+    for ip in all_ip_addresses:
+        if "." not in ip:
+            all_ip_addresses.remove(ip)
+
+    return all_ip_addresses
+
 
 def ipv6_addresses(domain, dns_resolvers):
     all_ip_addresses = []
     for resolver in dns_resolvers:
         try:
             result = subprocess.check_output(["nslookup", "-type=AAAA", domain, resolver], timeout=2, stderr=subprocess.STDOUT).decode("utf-8")
-            ip_addresses = re.findall(r'AAAA address ([a-fA-F0-9:]+)', result)
+            ip_addresses = re.findall(r'Address: ([a-fA-F0-9:]+)', result)
             all_ip_addresses += ip_addresses
         except Exception as e:
             pass
-    return list(set(all_ip_addresses))
+
+    all_ip_addresses = list(set(all_ip_addresses))
+
+    for ip in all_ip_addresses:
+        if ":" not in ip:
+            all_ip_addresses.remove(ip)
+
+    return all_ip_addresses
+
 
 def http_server(domain):
     try:
+        
         connection = http.client.HTTPSConnection(domain, 443, timeout=2)
         connection.request("GET", "/")
         response = connection.getresponse()
         headers = response.getheaders()
         header_dict = dict(headers)
         server_name = header_dict.get("Server", None)
+        if domain == "it.eecs.northwestern.edu":
+            print(response)
         return server_name
     except Exception as e:
         return None
+
 
 # Tests if website listens for unencrypted HTTP requests on port 80
 def insecure_http(domain):
@@ -60,6 +81,7 @@ def insecure_http(domain):
     except (socket.timeout, socket.error):
         return False
     
+
 def redirect_to_https(domain):
     try:
         connection = http.client.HTTPSConnection(domain, 443, timeout=2)
@@ -77,10 +99,12 @@ def redirect_to_https(domain):
         else:
             return False
     except Exception as e:
-        return None
+        return False
     
+
 def hsts(domain):
     try:
+        # Do I connect to port 443?
         connection = http.client.HTTPSConnection(domain, 443, timeout=2)
         connection.request("GET", "/")
         response = connection.getresponse()
@@ -92,12 +116,12 @@ def hsts(domain):
         else:
             return False
     except Exception as e:
-        # Check for this case
         return False
     
+
 def tls_versions(domain):
     # Add SSLv2, SSLv3
-    versions_of_tls = ["-tls1_3", "-tls1_2", "-tls1_1", "-tls1"]
+    versions_of_tls = ["-tls1_3", "-tls1_2", "-tls1_1", "-tls1", "-ssl2", "-ssl3"]
     response = []
 
     for version in versions_of_tls:
@@ -117,6 +141,10 @@ def tls_versions(domain):
                     value = "TLSv1.1"
                 elif version == "-tls1":
                     value = "TLSv1.0"
+                elif version == "-ssl2":
+                    value = "SSLv2"
+                elif version == "-ssl3":
+                    value = "SSLv3"
                 else:
                     raise Exception("TLS Version is not one of the predetermined values.")
                 response.append(value)
@@ -126,6 +154,7 @@ def tls_versions(domain):
 
     return response
 
+
 def root_ca(domain):
     try:
         result = subprocess.check_output(
@@ -134,14 +163,20 @@ def root_ca(domain):
             stderr=subprocess.STDOUT,
             input=b''
         ).decode("utf-8")
-        match = re.search(r'O=([^,]+)', result)
-        if match:
-            return match.group(1).strip()
+        result_array = result.split("---")[1].splitlines()
+        last_line = result_array[-1]
+        
+        if "O = \"" in last_line:
+            root_ca = last_line.split("O = \"")[1].split("\"")[0]
         else:
-            return None
+            root_ca = last_line.split("O = ")[1].split(",")[0]
+
+        return root_ca
 
     except Exception as e:
-        pass
+        print(e)
+        return None
+
 
 def rdns_names(list_of_ips):
     response = []
@@ -154,24 +189,27 @@ def rdns_names(list_of_ips):
         except Exception as e:
             pass
     
-    return response
+    return list(set(response))
+
 
 def rtt_range(list_of_ips):
     min_rtt = inf
     max_rtt = -inf
     for ip in list_of_ips:
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(2)
-            start_time = time.time()
-            # Do I have to change the port number?
-            sock.connect((ip, 443))
-            end_time = time.time()
-            rtt = end_time - start_time
-            min_rtt = min(rtt, min_rtt)
-            max_rtt = max(rtt, max_rtt)
-        except Exception as e:
-            pass
+        for port_number in [80, 22, 443]:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2)
+                start_time = time.time()
+                # Do I have to change the port number?
+                sock.connect((ip, port_number))
+                end_time = time.time()
+                rtt = end_time - start_time
+                min_rtt = min(rtt, min_rtt)
+                max_rtt = max(rtt, max_rtt)
+                break
+            except Exception as e:
+                pass
     
     if min_rtt == inf or max_rtt == -inf:
         return None
@@ -192,34 +230,33 @@ def geo_locations(list_of_ips):
                     subdivision = location["subdivisions"][0]["names"]["en"]
                     country = location["country"]["names"]["en"]
                     geo_location = city + ", " + subdivision + ", " + country
-                    print("1", geo_location)
                     response.add(geo_location)
                 elif "location" in location:
                     latitude = location["location"]["latitude"]
                     longitude = location["location"]["longitude"]
                     new_location = geolocator.reverse((latitude, longitude), addressdetails=True)
+                    new_location = new_location.raw
                     if "address" in new_location and "state" in new_location["address"] and "country" in new_location["address"]:
                         address = new_location["address"]
                         if "city" in address:
-                            city = address["city"] + "CITY"
+                            city = address["city"]
                         elif "county" in address:
-                            city = address["county"] + "COUNTY"
+                            city = address["county"]
                         else:
                             continue
-                        state = address["state"]
+                        if "state" in address:
+                            state = address["state"]
+                        elif "region" in address:
+                            state = address["region"]
+                        else:
+                            continue
                         country = address["country"]
                         geo_location = city + ", " + state + ", " + country
-                        print("2", geo_location)
                         response.add(geo_location)
                     else:
-                        print("Really? Nothing worked?")
-                        print(location)
-                        print(new_location.raw)
                         pass
             except Exception as e:
-                print("I am throwing an error", e)
                 pass
-    print(response)
     return list(response)
             
 #######################################################

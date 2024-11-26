@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 from math import inf
+from geopy.geocoders import Nominatim
 
 # 
 # Network Scanners
@@ -17,21 +18,31 @@ from math import inf
 def scan_time():
     return time.time()
 
-# Make sure that you are not returning the DNS server address
-# Modify to include DNS list
-def ipv4_addresses(domain):
-    result = subprocess.check_output(["nslookup", domain], timeout=2, stderr=subprocess.STDOUT).decode("utf-8")
-    ip_addresses = re.findall(r'Address: ([0-9.]+)', result)
-    return ip_addresses
+def ipv4_addresses(domain, dns_resolvers):
+    all_ip_addresses = []
+    for resolver in dns_resolvers:
+        try:
+            result = subprocess.check_output(["nslookup", domain, resolver], timeout=2, stderr=subprocess.STDOUT).decode("utf-8")
+            ip_addresses = re.findall(r'Address: ([0-9.]+)', result)
+            all_ip_addresses += ip_addresses
+        except Exception as e:
+            pass
+    return list(set(all_ip_addresses))
 
-def ipv6_addresses(domain):
-    result = subprocess.check_output(["nslookup", "-type=AAAA", domain], timeout=2, stderr=subprocess.STDOUT).decode("utf-8")
-    ip_addresses = re.findall(r'AAAA address ([a-fA-F0-9:]+)', result)
-    return ip_addresses
+def ipv6_addresses(domain, dns_resolvers):
+    all_ip_addresses = []
+    for resolver in dns_resolvers:
+        try:
+            result = subprocess.check_output(["nslookup", "-type=AAAA", domain, resolver], timeout=2, stderr=subprocess.STDOUT).decode("utf-8")
+            ip_addresses = re.findall(r'AAAA address ([a-fA-F0-9:]+)', result)
+            all_ip_addresses += ip_addresses
+        except Exception as e:
+            pass
+    return list(set(all_ip_addresses))
 
 def http_server(domain):
     try:
-        connection = http.client.HTTPSConnection(domain, 443, timeout=5)
+        connection = http.client.HTTPSConnection(domain, 443, timeout=2)
         connection.request("GET", "/")
         response = connection.getresponse()
         headers = response.getheaders()
@@ -44,14 +55,14 @@ def http_server(domain):
 # Tests if website listens for unencrypted HTTP requests on port 80
 def insecure_http(domain):
     try:
-        with socket.create_connection((domain, 80), timeout = 5) as sock:
+        with socket.create_connection((domain, 80), timeout = 2) as sock:
             return True
     except (socket.timeout, socket.error):
         return False
     
 def redirect_to_https(domain):
     try:
-        connection = http.client.HTTPSConnection(domain, 443, timeout=5)
+        connection = http.client.HTTPSConnection(domain, 443, timeout=2)
         connection.request("GET", "/")
         response = connection.getresponse()
         status_code = response.status
@@ -70,7 +81,7 @@ def redirect_to_https(domain):
     
 def hsts(domain):
     try:
-        connection = http.client.HTTPSConnection(domain, 443, timeout=5)
+        connection = http.client.HTTPSConnection(domain, 443, timeout=2)
         connection.request("GET", "/")
         response = connection.getresponse()
         headers = response.getheaders()
@@ -151,7 +162,7 @@ def rtt_range(list_of_ips):
     for ip in list_of_ips:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(5)
+            sock.settimeout(2)
             start_time = time.time()
             # Do I have to change the port number?
             sock.connect((ip, 443))
@@ -170,20 +181,49 @@ def rtt_range(list_of_ips):
 
 def geo_locations(list_of_ips):
     response = set()
+    geolocator = Nominatim(user_agent="geoapi")
+
     with maxminddb.open_database('GeoLite2-City_20201103/GeoLite2-City.mmdb') as db:
         for ip in list_of_ips:
-            # What do you do if city doesn't exist?
             try:
                 location = db.get(ip)
-                city = location["city"]["names"]["en"]
-                subdivision = location["subdivisions"][0]["names"]["en"]
-                country = location["country"]["names"]["en"]
-                geo_location = city + ", " + subdivision + ", " + country
-                response.add(geo_location)
+                if "city" in location and "subdivisions" in location and "country" in location:
+                    city = location["city"]["names"]["en"]
+                    subdivision = location["subdivisions"][0]["names"]["en"]
+                    country = location["country"]["names"]["en"]
+                    geo_location = city + ", " + subdivision + ", " + country
+                    print("1", geo_location)
+                    response.add(geo_location)
+                elif "location" in location:
+                    latitude = location["location"]["latitude"]
+                    longitude = location["location"]["longitude"]
+                    new_location = geolocator.reverse((latitude, longitude), addressdetails=True)
+                    if "address" in new_location and "state" in new_location["address"] and "country" in new_location["address"]:
+                        address = new_location["address"]
+                        if "city" in address:
+                            city = address["city"] + "CITY"
+                        elif "county" in address:
+                            city = address["county"] + "COUNTY"
+                        else:
+                            continue
+                        state = address["state"]
+                        country = address["country"]
+                        geo_location = city + ", " + state + ", " + country
+                        print("2", geo_location)
+                        response.add(geo_location)
+                    else:
+                        print("Really? Nothing worked?")
+                        print(location)
+                        print(new_location.raw)
+                        pass
             except Exception as e:
+                print("I am throwing an error", e)
                 pass
+    print(response)
     return list(response)
             
+#######################################################
+# Main Execution
 
 # Check for correct number of parameters
 if len(sys.argv) != 3:
@@ -204,6 +244,13 @@ with open(input_file_path, "r") as input_file:
         line = line.strip()
         web_domains.append(line)
 
+# Read in public DNS resolvers
+dns_resolvers = []
+
+with open("public_dns_resolvers.txt") as f:
+    for resolver in f:
+        dns_resolvers.append(resolver.strip())
+
 # Create json dictionary
 output_json = {}
 
@@ -211,14 +258,12 @@ output_json = {}
 for domain in web_domains:
     output_json[domain] = {}
 
-geo_locations(["165.124.85.22"])
-
 # Log information
 for domain in web_domains:
     output_json[domain]["scan_time"] = scan_time()
-    ipv4 = ipv4_addresses(domain)
+    ipv4 = ipv4_addresses(domain, dns_resolvers)
     output_json[domain]["ipv4_addresses"] = ipv4
-    output_json[domain]["ipv6_addresses"] = ipv6_addresses(domain)
+    output_json[domain]["ipv6_addresses"] = ipv6_addresses(domain, dns_resolvers)
     output_json[domain]["http_server"] = http_server(domain)
     output_json[domain]["insecure_http"] = insecure_http(domain)
     output_json[domain]["redirect_to_https"] = redirect_to_https(domain)

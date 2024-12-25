@@ -2,6 +2,8 @@
 
 This project is a Python script that gathers networking information of your favorite websites.
 
+First, you run scan.py to retrieve the networking information. Then, your run report.py to display the information in a user-friendly format.
+
 ## Installation
 
 First, create a Python virtual environment. Then, run 

@@ -66,8 +66,6 @@ def http_server(domain):
         headers = response.getheaders()
         header_dict = dict(headers)
         server_name = header_dict.get("Server", None)
-        if domain == "it.eecs.northwestern.edu":
-            print(response)
         return server_name
     except Exception as e:
         return None
@@ -104,7 +102,6 @@ def redirect_to_https(domain):
 
 def hsts(domain):
     try:
-        # Do I connect to port 443?
         connection = http.client.HTTPSConnection(domain, 443, timeout=2)
         connection.request("GET", "/")
         response = connection.getresponse()
@@ -120,7 +117,6 @@ def hsts(domain):
     
 
 def tls_versions(domain):
-    # Add SSLv2, SSLv3
     versions_of_tls = ["-tls1_3", "-tls1_2", "-tls1_1", "-tls1", "-ssl2", "-ssl3"]
     response = []
 
@@ -201,7 +197,6 @@ def rtt_range(list_of_ips):
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(2)
                 start_time = time.time()
-                # Do I have to change the port number?
                 sock.connect((ip, port_number))
                 end_time = time.time()
                 rtt = end_time - start_time
@@ -297,6 +292,7 @@ for domain in web_domains:
 
 # Log information
 for domain in web_domains:
+    print(f"Scanning information for {domain}...")
     output_json[domain]["scan_time"] = scan_time()
     ipv4 = ipv4_addresses(domain, dns_resolvers)
     output_json[domain]["ipv4_addresses"] = ipv4

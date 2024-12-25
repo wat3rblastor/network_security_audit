@@ -1,4 +1,4 @@
-geographiclib==1.52
-geopy==2.2.0
-maxminddb==2.2.0
-texttable==1.7.0
+geographiclib
+geopy
+maxminddb
+texttable
